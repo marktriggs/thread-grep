@@ -173,7 +173,9 @@ class ThreadGrep
 
   def main
     opts = Trollop::options do
-      opt :match, "Show only threads matching pattern", :type => :string
+      opt :match, "Show only threads matching pattern", :type => :string, :multi => true
+      opt :exclude, "Exclude threads matching pattern", :type => :string, :multi => true
+      opt :grep, "Only show stack lines matching pattern", :type => :string, :multi => true
       opt :lines, "Show <lines> lines per thread", :type => :int
     end
 
@@ -188,10 +190,12 @@ class ThreadGrep
     thread_dump = ThreadDumpExtractor.new(log_file).call
 
     ThreadDumpParser.new(thread_dump).each do |thread|
-      next if opts[:match] && !thread.matches(opts[:match])
+      next unless opts[:match].all? {|pattern| thread.matches(pattern)}
+      next unless opts[:exclude].none? {|pattern| thread.matches(pattern)}
 
       puts "#{thread.name} (STATE: #{thread.state})"
       thread.stack.take(opts[:lines] || thread.stack.length).each do |frame|
+        next unless opts[:grep].all? {|pattern| frame =~ /#{pattern}/}
         puts "  #{frame}"
       end
       puts ""
