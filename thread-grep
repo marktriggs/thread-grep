@@ -1,5 +1,7 @@
 #!/usr/bin/env ruby
 
+require 'socket'
+
 class Maybe
 
   ## Constructors
@@ -33,12 +35,13 @@ class Maybe
 end
 
 
+START_THREAD_DUMP_PATTERN = /Full thread dump Java HotSpot/
+FINISH_THREAD_DUMP_PATTERN = /JNI global references|^Heap$/
+
 # Find the most recent JVM thread dump in a (potentially large) log file.
 class ThreadDumpExtractor
 
   CHUNK_SIZE = 32 * 1024
-  START_THREAD_DUMP_PATTERN = /Full thread dump Java HotSpot/
-  FINISH_THREAD_DUMP_PATTERN = /JNI global references|^Heap$/
 
 
   def initialize(file)
@@ -102,6 +105,52 @@ class ThreadDumpExtractor
     end
 
     result
+  end
+
+end
+
+# Grabs a thread dump from a running JVM via the attach protocol
+class ThreadDumpAttacher
+
+  def initialize(pid)
+    @pid = pid
+    @attach_file = "/tmp/.attach_pid#{pid}"
+    @socket_file = "/tmp/.java_pid#{pid}"
+  end
+
+  def call
+    # the JVM won't respond unless our euid and egid match its own
+    stat = File.stat "/proc/#{@pid}"
+    Process::Sys.setegid stat.gid
+    Process::Sys.seteuid stat.uid
+
+    attach unless File.exists?(@socket_file)
+
+    UNIXSocket.open(@socket_file) do |socket|
+      socket.send("1\0threaddump\0\0\0\0", 0)
+      status = socket.readline.strip
+      raise "JVM error: #{status}: " + socket.read() unless status == "0"
+      timestamp = socket.readline
+      raise "Unexpected thread dump format" unless socket.readline =~ START_THREAD_DUMP_PATTERN
+      thread_dump = socket.lines.take_while {|line| !(line =~ FINISH_THREAD_DUMP_PATTERN)}
+      thread_dump.map {|line| line.strip}
+    end
+  end
+
+  private
+
+  def attach
+    File.open(@attach_file, "w") {}
+    begin
+      Process.kill("QUIT", @pid)
+      20.times do
+        return if File.exists?(@socket_file)
+        sleep 0.1
+      end
+      raise "JVM did not respond"
+    ensure
+      File.delete(@attach_file)
+    end
   end
 
 end
@@ -200,11 +249,12 @@ class ThreadGrep
       opt :lines, "Show <lines> lines per thread", :type => :int
       opt :cluster, "Groups threads with identical stack traces"
       opt :color, "Colorize the output {never,auto,always}", :type => :string, :default => 'auto'
+      opt :pid, "Attach to a running JVM and obtain a thread dump", :type => :int
     end
 
     log_file = ARGV.fetch(0, nil)
 
-    unless log_file
+    unless log_file || opts[:pid]
       $stderr.puts "Usage: #{$0} <log file>"
       $stderr.puts "  Type '-h' for options"
       exit
@@ -212,7 +262,11 @@ class ThreadGrep
 
     use_color = opts[:color] == 'always' || (opts[:color] == 'auto' && STDOUT.tty?)
 
-    thread_dump = ThreadDumpExtractor.new(log_file).call
+    if opts[:pid]
+      thread_dump = ThreadDumpAttacher.new(opts[:pid]).call
+    else
+      thread_dump = ThreadDumpExtractor.new(log_file).call
+    end
 
     threads = ThreadDumpParser.new(thread_dump).select do |thread|
       opts[:match].all? {|pattern| thread.matches(pattern)} &&
