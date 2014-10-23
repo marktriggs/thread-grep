@@ -153,12 +153,17 @@ class ThreadDumpAttacher
   end
 
   if RUBY_PLATFORM =~ /.*solaris.*/
+    $VERBOSE = nil # suppress DL deprecation warning in Ruby 2.0+
     require 'dl'
     require 'dl/import'
     require 'dl/struct'
 
     module LibDoor
-      extend DL::Importable
+      begin
+        extend DL::Importer # Ruby 1.9+
+      rescue NameError
+        extend DL::Importable # Ruby 1.8
+      end
       dlload "libdoor.so"
       Desc = struct [
         "int attr",
@@ -180,9 +185,14 @@ class ThreadDumpAttacher
     def rpc(cmd, &block)
       File.open(@socket_file, "r") do |door|
         arg = LibDoor::Arg.malloc
-        arg.data_ptr = cmd.to_ptr
+        if cmd.respond_to? :to_ptr
+          arg.data_ptr = cmd.to_ptr # Ruby 1.8
+        else
+          arg.data_ptr = cmd # Ruby 1.9+
+        end
         arg.data_size = cmd.size
         arg.desc_ptr = nil
+        arg.desc_num = 0
         arg.rbuf = DL::malloc(128)
         arg.rsize = 128
 
