@@ -109,6 +109,7 @@ end
 
 # Parse a JVM thread dump log into individual threads.
 class ThreadDumpParser
+  include Enumerable
 
   def initialize(s)
     @source_lines = s
@@ -177,6 +178,7 @@ class ThreadGrep
       opt :exclude, "Exclude threads matching pattern", :type => :string, :multi => true
       opt :grep, "Only show stack lines matching pattern", :type => :string, :multi => true
       opt :lines, "Show <lines> lines per thread", :type => :int
+      opt :cluster, "Groups threads with identical stack traces"
     end
 
     log_file = ARGV.fetch(0, nil)
@@ -189,12 +191,26 @@ class ThreadGrep
 
     thread_dump = ThreadDumpExtractor.new(log_file).call
 
-    ThreadDumpParser.new(thread_dump).each do |thread|
-      next unless opts[:match].all? {|pattern| thread.matches(pattern)}
-      next unless opts[:exclude].none? {|pattern| thread.matches(pattern)}
+    threads = ThreadDumpParser.new(thread_dump).select do |thread|
+      opts[:match].all? {|pattern| thread.matches(pattern)} &&
+      opts[:exclude].none? {|pattern| thread.matches(pattern)}
+    end
 
-      puts "#{thread.name} (STATE: #{thread.state})"
-      thread.stack.take(opts[:lines] || thread.stack.length).each do |frame|
+    if opts[:lines]
+      threads.each {|thread| thread.stack = thread.stack.take(opts[:lines])}
+    end
+
+    if opts[:cluster]
+      groups = threads.group_by {|thread| thread.stack}
+    else
+      groups = threads.map {|thread| [thread.stack, [thread]]}
+    end
+
+    groups.each do |stack, threads|
+      threads.each do |thread|
+        puts "#{thread.name} (STATE: #{thread.state})"
+      end
+      stack.each do |frame|
         next unless opts[:grep].all? {|pattern| frame =~ /#{pattern}/}
         puts "  #{frame}"
       end
