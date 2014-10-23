@@ -126,8 +126,7 @@ class ThreadDumpAttacher
 
     attach unless File.exists?(@socket_file)
 
-    UNIXSocket.open(@socket_file) do |socket|
-      socket.send("1\0threaddump\0\0\0\0", 0)
+    rpc("1\0threaddump\0\0\0\0") do |socket|
       status = socket.readline.strip
       raise "JVM error: #{status}: " + socket.read() unless status == "0"
       timestamp = socket.readline
@@ -153,6 +152,57 @@ class ThreadDumpAttacher
     end
   end
 
+  if RUBY_PLATFORM =~ /.*solaris.*/
+    require 'dl'
+    require 'dl/import'
+    require 'dl/struct'
+
+    module LibDoor
+      extend DL::Importable
+      dlload "libdoor.so"
+      Desc = struct [
+        "int attr",
+        "int fd",
+        "long id_lo",
+        "long id_hi",
+      ]
+      Arg = struct [
+        "char *data_ptr",
+        "long data_size",
+        "Desc *desc_ptr",
+        "int desc_num",
+        "char *rbuf",
+        "long rsize",
+      ]
+      extern "int door_call(int, Arg*)"
+    end
+
+    def rpc(cmd, &block)
+      File.open(@socket_file, "r") do |door|
+        arg = LibDoor::Arg.malloc
+        arg.data_ptr = cmd.to_ptr
+        arg.data_size = cmd.size
+        arg.desc_ptr = nil
+        arg.rbuf = DL::malloc(128)
+        arg.rsize = 128
+
+        err = LibDoor.door_call(door.fileno, arg)
+        raise "door error #{err}" unless err == 0
+        perr = arg.rbuf.to_s(1)[0].ord
+        raise "protocol error #{perr}" unless perr == 0
+
+        desc = LibDoor::Desc.new(arg.desc_ptr)
+        IO.open(desc.fd, "r") {|io| block.call(io)}
+      end
+    end
+  else
+    def rpc(cmd, &block)
+      UNIXSocket.open(@socket_file) do |socket|
+        socket.send(cmd, 0)
+        block.call(socket)
+      end
+    end
+  end
 end
 
 
