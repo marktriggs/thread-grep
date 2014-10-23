@@ -172,6 +172,26 @@ end
 # Extract and summarise threads matching a given criteria.
 class ThreadGrep
 
+  RESET_COLOR = "\033[0m"
+  STATE_COLORS = {
+    "RUNNABLE" => "\033[1;32m",
+    "UNKNOWN" => "\033[1;37m",
+    "BLOCKED" => "\033[1;33m",
+    "WAITING" => "\033[1;33m",
+    "TIMED_WAITING" => "\033[1;33m",
+  }
+  FRAME_COLORS = {
+    /at (javax?|sun|org\.mortbay|org\.restlet|org\.eclipse\.jetty)\./ => "\033[0;37m",
+    /- / => "\033[0;36m",
+  }
+
+  def frame_color(frame)
+    FRAME_COLORS.each do |regex, color|
+      return color if frame =~ regex
+    end
+    ""
+  end
+
   def main
     opts = Trollop::options do
       opt :match, "Show only threads matching pattern", :type => :string, :multi => true
@@ -179,6 +199,7 @@ class ThreadGrep
       opt :grep, "Only show stack lines matching pattern", :type => :string, :multi => true
       opt :lines, "Show <lines> lines per thread", :type => :int
       opt :cluster, "Groups threads with identical stack traces"
+      opt :color, "Colorize the output {never,auto,always}", :type => :string, :default => 'auto'
     end
 
     log_file = ARGV.fetch(0, nil)
@@ -188,6 +209,8 @@ class ThreadGrep
       $stderr.puts "  Type '-h' for options"
       exit
     end
+
+    use_color = opts[:color] == 'always' || (opts[:color] == 'auto' && STDOUT.tty?)
 
     thread_dump = ThreadDumpExtractor.new(log_file).call
 
@@ -208,11 +231,17 @@ class ThreadGrep
 
     groups.each do |stack, threads|
       threads.each do |thread|
-        puts "#{thread.name} (STATE: #{thread.state})"
+        print STATE_COLORS[thread.state] || "" if use_color
+        print "#{thread.name} (STATE: #{thread.state})"
+        print RESET_COLOR if use_color
+        puts ""
       end
       stack.each do |frame|
         next unless opts[:grep].all? {|pattern| frame =~ /#{pattern}/}
-        puts "  #{frame}"
+        print frame_color(frame) if use_color
+        print "  #{frame}"
+        print RESET_COLOR if use_color
+        puts ""
       end
       puts ""
     end
