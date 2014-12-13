@@ -236,9 +236,28 @@ class ThreadDumpParser
 
   JVMThread = Struct.new(:name, :state, :stack) do
 
+    def name
+      translate_nid(self[:name])
+    end
+
+
     def matches(regexp)
       pattern = /#{regexp}/
       self.name =~ pattern || self.state =~ pattern || self.stack.any? {|frame| frame =~ pattern}
+    end
+
+    private
+
+    # Parse out the 'nid' (the OS Thread ID) and show it in base-10 for easier matching up with top(1)
+    def translate_nid(s)
+      nid_pattern = / nid=0x([a-f0-9]+)/
+
+      if s =~ nid_pattern
+        thread_id = Integer($1, 16)
+        s.gsub(nid_pattern) {|nid| "#{nid} os_thread_id=#{thread_id}"}
+      else
+        s
+      end
     end
 
   end
