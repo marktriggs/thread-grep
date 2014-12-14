@@ -253,7 +253,7 @@ class ThreadDumpParser
       nid_pattern = / nid=0x([a-f0-9]+)/
 
       if s =~ nid_pattern
-        thread_id = Integer($1, 16)
+        thread_id = $1.hex
         s.gsub(nid_pattern) {|nid| "#{nid} os_thread_id=#{thread_id}"}
       else
         s
