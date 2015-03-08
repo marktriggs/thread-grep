@@ -398,7 +398,7 @@ class ThreadGrep
     if opts[:pid]
       thread_dump = ThreadDumpAttacher.new(opts[:pid]).call
     else
-      thread_dump, file_position = ThreadDumpExtractor.new(log_file).call(opts.fetch(:nthlast, 0))
+      thread_dump, file_position = ThreadDumpExtractor.new(log_file).call(opts[:nthlast] || 0)
 
       if opts.fetch(:before_context) > 0
         # Show our N lines of context leading up to the thread dump
