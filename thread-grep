@@ -49,15 +49,20 @@ class ThreadDumpExtractor
   end
 
 
-  def call
+  def call(nthlast = 0)
     file_size = File.size(@file)
+    thread_dump_positions = []
     File.open(@file, "r") do |fh|
       (0..file_size).step(CHUNK_SIZE).to_a.reverse.each do |offset|
         upper = [offset + CHUNK_SIZE, file_size].min
-        last_thread_dump_position = find_last_thread_dump(fh, offset, upper)
+        thread_dump_positions = find_thread_dump_positions(fh, offset, upper) + thread_dump_positions
 
-        if last_thread_dump_position.has_value?
-          return read_thread_dump(fh, last_thread_dump_position.value)
+        if nthlast < thread_dump_positions.length
+          # We found enough thread dumps to satisfy our nthlast request.
+          nthlast_index = thread_dump_positions.length - 1 - nthlast
+          return read_thread_dump(fh, thread_dump_positions[nthlast_index])
+        else
+          # the search continues
         end
       end
     end
@@ -68,21 +73,21 @@ class ThreadDumpExtractor
 
   private
 
-  # Find the start position of the last thread dump between two positions
-  def find_last_thread_dump(fh, start_position, end_position)
+  # Find the line start positions of the thread dumps between two positions.
+  def find_thread_dump_positions(fh, start_position, end_position)
     fh.seek(start_position, IO::SEEK_SET)
-    last_thread_dump_seen = Maybe.nothing
+    thread_dump_positions = []
 
     while fh.tell < end_position
       line_start_position = fh.tell
       line = fh.gets
 
       if line =~ START_THREAD_DUMP_PATTERN
-        last_thread_dump_seen = Maybe.value(line_start_position)
+        thread_dump_positions << line_start_position
       end
     end
 
-    last_thread_dump_seen
+    thread_dump_positions
   end
 
 
@@ -329,6 +334,7 @@ class ThreadGrep
       opt :cluster, "Groups threads with identical stack traces"
       opt :color, "Colorize the output {never,auto,always}", :type => :string, :default => 'auto'
       opt :pid, "Attach to a running JVM and obtain a thread dump", :type => :int
+      opt :nthlast, "When reading from a file, find the nth-last thread dump (0 = last, 1 = second-last, etc)", :type => :int
     end
 
     log_file = ARGV.fetch(0, nil)
@@ -344,7 +350,7 @@ class ThreadGrep
     if opts[:pid]
       thread_dump = ThreadDumpAttacher.new(opts[:pid]).call
     else
-      thread_dump = ThreadDumpExtractor.new(log_file).call
+      thread_dump = ThreadDumpExtractor.new(log_file).call(opts.fetch(:nthlast, 0))
     end
 
     threads = ThreadDumpParser.new(thread_dump).select do |thread|
