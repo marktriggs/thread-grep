@@ -60,7 +60,9 @@ class ThreadDumpExtractor
         if nthlast < thread_dump_positions.length
           # We found enough thread dumps to satisfy our nthlast request.
           nthlast_index = thread_dump_positions.length - 1 - nthlast
-          return read_thread_dump(fh, thread_dump_positions[nthlast_index])
+          position = thread_dump_positions[nthlast_index]
+
+          return [read_thread_dump(fh, position), position]
         else
           # the search continues
         end
@@ -113,6 +115,51 @@ class ThreadDumpExtractor
   end
 
 end
+
+
+class SnippetExtractor
+
+  CHUNK_SIZE = 32 * 1024
+
+
+  def initialize(file, start_position)
+    @file = file
+    @start_position = start_position
+  end
+
+
+  def call(lines_wanted)
+    # Work backwards in multiples of CHUNK_SIZE until we have enough lines.
+    File.open(@file, "r") do |fh|
+      lines = []
+      offset = CHUNK_SIZE
+
+      while lines.length < lines_wanted && ((@start_position - offset) + CHUNK_SIZE) >= 0
+        lines.clear
+
+        fh.seek([@start_position - offset, 0].max, IO::SEEK_SET)
+        fh.readline             # discard partial line
+
+        # <= here so we include the "Full thread dump" marker line.  Nice to see.
+        while fh.tell <= @start_position
+          lines << fh.readline
+        end
+
+        offset += CHUNK_SIZE
+      end
+
+      if lines_wanted < lines.length
+        # If we have too many lines, just show the number requested.
+        lines[-lines_wanted..-1]
+      else
+        # Or give 'em what we got.
+        lines
+      end
+
+    end
+  end
+end
+
 
 # Grabs a thread dump from a running JVM via the attach protocol
 class ThreadDumpAttacher
@@ -335,6 +382,7 @@ class ThreadGrep
       opt :color, "Colorize the output {never,auto,always}", :type => :string, :default => 'auto'
       opt :pid, "Attach to a running JVM and obtain a thread dump", :type => :int
       opt :nthlast, "When reading from a file, find the nth-last thread dump (0 = last, 1 = second-last, etc)", :type => :int
+      opt :before_context, "When reading from a file, show N lines of the log prior to the thread dump", :type => :int, :short => 'B', :default => 0
     end
 
     log_file = ARGV.fetch(0, nil)
@@ -350,7 +398,17 @@ class ThreadGrep
     if opts[:pid]
       thread_dump = ThreadDumpAttacher.new(opts[:pid]).call
     else
-      thread_dump = ThreadDumpExtractor.new(log_file).call(opts.fetch(:nthlast, 0))
+      thread_dump, file_position = ThreadDumpExtractor.new(log_file).call(opts.fetch(:nthlast, 0))
+
+      if opts.fetch(:before_context) > 0
+        # Show our N lines of context leading up to the thread dump
+        SnippetExtractor.new(log_file, file_position).call(opts.fetch(:before_context)).each do |line|
+          puts line
+        end
+
+        puts ""
+      end
+
     end
 
     threads = ThreadDumpParser.new(thread_dump).select do |thread|
@@ -385,6 +443,8 @@ class ThreadGrep
       puts ""
     end
 
+  rescue Errno::EPIPE
+    # Not a big deal.  Maybe they're running us through head(1)
   end
 
 end
