@@ -35,7 +35,7 @@ class Maybe
 end
 
 
-START_THREAD_DUMP_PATTERN = /Full thread dump Java HotSpot/
+START_THREAD_DUMP_PATTERN = /Full thread dump (Java HotSpot|OpenJDK)/
 FINISH_THREAD_DUMP_PATTERN = /JNI global references|^Heap$/
 
 # Find the most recent JVM thread dump in a (potentially large) log file.
