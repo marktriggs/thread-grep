@@ -379,6 +379,7 @@ class ThreadGrep
       opt :grep, "Only show stack lines matching pattern", :type => :string, :multi => true
       opt :lines, "Show <lines> lines per thread", :type => :int
       opt :cluster, "Groups threads with identical stack traces"
+      opt :sort, "Sort threads by name within their groups"
       opt :color, "Colorize the output {never,auto,always}", :type => :string, :default => 'auto'
       opt :pid, "Attach to a running JVM and obtain a thread dump", :type => :int
       opt :nthlast, "When reading from a file, find the nth-last thread dump (0 = last, 1 = second-last, etc)", :type => :int
@@ -414,6 +415,10 @@ class ThreadGrep
     threads = ThreadDumpParser.new(thread_dump).select do |thread|
       opts[:match].all? {|pattern| thread.matches(pattern)} &&
       opts[:exclude].none? {|pattern| thread.matches(pattern)}
+    end
+
+    if opts[:sort]
+      threads = threads.sort_by(&:name)
     end
 
     if opts[:lines]
